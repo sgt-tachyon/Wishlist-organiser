@@ -422,28 +422,36 @@ async function gdFetch(url,opt,interactive){
   if(r.status===401){gd.tok='';gd.exp=0}
   if(!r.ok){const e=new Error(r.status===403?'Google refused access. Check that the Drive API is enabled and your Gmail is a test user.':'Google Drive error '+r.status);e.status=r.status;throw e}
   return r}
+/* tolerant readers: an empty or damaged reply never throws */
+async function rj(r){const t=await r.text();try{return t?JSON.parse(t):{}}catch{return {}}}
+async function gdRead(id,i){const t=await (await gdFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{},i)).text();
+  try{const d=t?JSON.parse(t):null;return d&&Array.isArray(d.items)?d:null}catch{return null}}
 async function gdFind(i){
-  if(gd.fileId){try{return await (await gdFetch(`https://www.googleapis.com/drive/v3/files/${gd.fileId}?fields=id,modifiedTime`,{},i)).json()}catch(e){if(e.status!==404)throw e;gd.fileId=''}}
+  if(gd.fileId){try{const o=await rj(await gdFetch(`https://www.googleapis.com/drive/v3/files/${gd.fileId}?fields=id,modifiedTime`,{},i));if(o.id)return o;gd.fileId=''}catch(e){if(e.status!==404)throw e;gd.fileId=''}}
   const q=encodeURIComponent(`name='${FNAME}'`);
   const r=await gdFetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&orderBy=modifiedTime%20desc&fields=files(id,modifiedTime)`,{},i);
-  return ((await r.json()).files||[])[0]||null}
+  return ((await rj(r)).files||[])[0]||null}
 async function gdPush(f,i){
-  if(!f){const r=await gdFetch('https://www.googleapis.com/drive/v3/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:FNAME,parents:['appDataFolder']})},i);f=await r.json()}
-  const r=await gdFetch(`https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=media&fields=id,modifiedTime`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(exportData())},i);
-  const o=await r.json();gd.fileId=o.id;gd.remoteMod=o.modifiedTime||'';gdCfg()}
+  const payload=JSON.stringify(exportData());let r;
+  if(!f){/* create the file together with its content, so an empty file is never left behind */
+    const b='wl'+uid()+uid();
+    r=await gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+b},
+      body:`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name:FNAME,parents:['appDataFolder']})}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${payload}\r\n--${b}--`},i)}
+  else r=await gdFetch(`https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=media&fields=id,modifiedTime`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:payload},i);
+  const o=await rj(r);gd.fileId=o.id||(f&&f.id)||'';gd.remoteMod=o.modifiedTime||'';gdCfg()}
 /* Compare with Drive and push or pull as needed. Returns 'pulled' | 'pushed' | 'skipped' */
 async function gdSync(i,full){
   const f=await gdFind(i);
   if(f&&(full||f.modifiedTime!==gd.remoteMod)){
-    const remote=await (await gdFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`,{},i)).json();
-    const rt=+remote.updatedAt||0,lt=+S.updatedAt||0;
-    if(remote&&Array.isArray(remote.items)&&rt>lt){
+    const remote=await gdRead(f.id,i);   /* null when the Drive file is empty or damaged: then we simply overwrite it */
+    const rt=remote?+remote.updatedAt||0:0,lt=+S.updatedAt||0;
+    if(remote&&rt>lt){
       let use=true;
       if(S.items.length){const when=t=>t?new Date(t).toLocaleString():'never';
         use=await dlg('Two versions found',`Google Drive has a newer list (${when(rt)}) than this device (${when(lt)}). Which one do you want to keep?`,false,'','Use Drive copy','Keep this device')}
       if(use===true){await adopt(remote);gd.fileId=f.id;gd.remoteMod=f.modifiedTime;gdCfg();persist();render();return 'pulled'}
       if(use!==false)return 'skipped'}
-    else if(rt===lt&&remote&&Array.isArray(remote.items)){gd.fileId=f.id;gd.remoteMod=f.modifiedTime;gdCfg();return 'pushed'}}
+    else if(remote&&rt===lt){gd.fileId=f.id;gd.remoteMod=f.modifiedTime;gdCfg();return 'pushed'}}
   await gdPush(f,i);return 'pushed'}
 function gdSchedule(){if(!gd.on||!gd.clientId)return;clearTimeout(gdTimer);gdBadge('pending');gdTimer=setTimeout(gdAuto,4000)}
 async function gdAuto(){
@@ -464,8 +472,8 @@ $('#gdPush').onclick=async()=>{gdSt('Saving…');try{await gdPush(await gdFind(t
 $('#gdPull').onclick=async()=>{
   try{const f=await gdFind(true);if(!f){gdSt('There is no copy in Drive yet.',true);return}
     if(!(await confirm2('Replace the list on this device with the Drive copy?','Replace')))return;
-    const remote=await (await gdFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`,{},true)).json();
-    if(!remote||!Array.isArray(remote.items))throw new Error('The Drive copy isn’t a valid wishlist.');
+    const remote=await gdRead(f.id,true);
+    if(!remote)throw new Error('The copy in Drive is empty or damaged. Use “Save to Drive now” to replace it.');
     await adopt(remote);gd.remoteMod=f.modifiedTime;gdCfg();persist();render();gdSt('Loaded from Drive.')}
   catch(e){gdSt(e.message,true)}};
 $('#gdOff').onclick=()=>{gd.on=false;gd.tok='';gd.exp=0;gdCfg();gdUi();gdBadge('');gdSt('Disconnected. The copy in Drive is left as it was.')};
