@@ -100,12 +100,21 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .st{font-size:12px;color:var(--muted);min-height:16px}
 .st.err{color:var(--err)}
 textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
+.badge2{flex:none;border:0;background:none;color:var(--muted);font-size:12px;padding:6px 4px;border-radius:8px}
+.badge2:hover{background:var(--hover)}
+.badge2[hidden],.btn[hidden]{display:none}
+.sec{border-top:1px solid var(--line);padding-top:12px}
+.sec:first-child{border-top:0;padding-top:0}
+.sec ol{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:13px}
+.sec summary{cursor:pointer;color:var(--accent);font-size:13px;margin-top:6px}
+.sec code{background:var(--hover);padding:1px 5px;border-radius:5px;word-break:break-all}
 </style>
 </head>
 <body>
 <header>
   <div class="top"><h1><span>&#9825;</span> Wishlist <span class="sub" id="subtitle"></span></h1>
-    <button class="ib" id="bkBtn" title="Backup and restore" aria-label="Backup and restore">&#8645;</button></div>
+    <button class="badge2" id="gdBadge" hidden></button>
+    <button class="ib" id="bkBtn" title="Backup and sync" aria-label="Backup and sync">&#8645;</button></div>
   <div class="row2"><input id="search" class="in" type="search" placeholder="Search items"><div class="seg" id="seg"><button data-view="gallery">Gallery</button><button data-view="priority">Priority</button></div></div>
   <div class="scroll" id="nav"></div>
 </header>
@@ -140,13 +149,34 @@ textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
 <dialog id="ask"><div class="mh" id="askT"></div><div class="mb"><div id="askM"></div><input class="in" id="askI"></div><div class="mf"><button type="button" class="btn" id="askNo">Cancel</button><button type="button" class="btn primary" id="askOk">OK</button></div></dialog>
 
 <dialog id="bk">
-  <div class="mh">Backup and restore</div>
+  <div class="mh">Backup and sync</div>
   <div class="mb">
-    <div class="st">Your wishlist is stored in this browser on this device. Copy the backup text to keep a spare copy or to move the list to another device, then paste it here to restore.</div>
-    <textarea class="in" id="bkText" spellcheck="false"></textarea>
-    <div class="st" id="bkSt"></div>
+    <div class="sec f"><label>Google Drive sync</label>
+      <div class="st" id="gdInfo" style="min-height:0;margin-bottom:8px">Keeps your list and pictures in a private, hidden app folder in your Google Drive. It can't see your other Drive files.</div>
+      <input class="in" id="gdId" placeholder="OAuth client ID (ends in .apps.googleusercontent.com)" autocapitalize="off" autocomplete="off" spellcheck="false">
+      <div class="pvb" style="margin-top:8px"><button type="button" class="btn primary" id="gdConnect">Connect Google Drive</button><button type="button" class="btn" id="gdPush" hidden>Save to Drive now</button><button type="button" class="btn" id="gdPull" hidden>Load from Drive</button><button type="button" class="btn" id="gdOff" hidden>Disconnect</button></div>
+      <div class="st" id="gdSt"></div>
+      <details><summary>One-time setup (about 5 minutes)</summary>
+        <ol>
+          <li>Go to <code>console.cloud.google.com</code> and create a project.</li>
+          <li>APIs &amp; Services &rarr; Library &rarr; enable <b>Google Drive API</b>.</li>
+          <li>OAuth consent screen &rarr; External. Under Test users, add your own Gmail.</li>
+          <li>Credentials &rarr; Create credentials &rarr; OAuth client ID &rarr; Web application. Under Authorized JavaScript origins, add: <code id="gdOrigin"></code></li>
+          <li>Copy the Client ID, paste it above and connect. Google may say the app isn't verified: choose Continue.</li>
+        </ol>
+        <div class="st" id="gdWarn" style="margin-top:6px"></div>
+      </details>
+    </div>
+    <div class="sec f"><label>Manual backup (includes pictures)</label>
+      <div class="pvb"><button type="button" class="btn" id="bkDl">Download file</button><button type="button" class="btn" id="bkLoad">Restore from file</button><button type="button" class="btn" id="bkCopy">Copy as text</button></div>
+      <input type="file" id="bkFile" accept=".json,application/json" hidden>
+      <details id="bkDet"><summary>Restore from pasted text</summary>
+        <textarea class="in" id="bkText" spellcheck="false" placeholder="Paste backup text here" style="margin-top:6px"></textarea>
+        <button type="button" class="btn" id="bkRestore" style="margin-top:6px">Restore from text</button></details>
+      <div class="st" id="bkSt"></div>
+    </div>
   </div>
-  <div class="mf"><button type="button" class="btn" id="bkClose">Close</button><button type="button" class="btn" id="bkRestore">Restore from text</button><button type="button" class="btn primary" id="bkCopy">Copy backup</button></div>
+  <div class="mf"><button type="button" class="btn" id="bkClose">Close</button></div>
 </dialog>
 
 <script>
@@ -167,8 +197,28 @@ const unit=it=>{const v=(it.variants||[])[it.variant];return hasP(v)?parseFloat(
 const line=it=>unit(it)*(it.qty||1);
 const counted=it=>!it.bought;
 
-/* ---- storage (this browser only) ---- */
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){dlg('Could not save','Storage may be full or blocked. Remove some photos or make a backup.',false,'','OK')}}
+/* ---- storage (this browser only) ----
+   The list itself (text) lives in localStorage. Pictures live in IndexedDB, which has far more room.
+   An item's image is either a web address or a reference like "idb:abc123". */
+const IMG={};let idb=null;
+const isRef=s=>typeof s==='string'&&s.startsWith('idb:');
+const imgSrc=it=>isRef(it.image)?(IMG[it.image]||''):(it.image||'');
+function idbOpen(){return new Promise(res=>{try{const r=indexedDB.open('wishlist_pics',1);r.onupgradeneeded=()=>r.result.createObjectStore('p');r.onsuccess=()=>res(r.result);r.onerror=()=>res(null);r.onblocked=()=>res(null)}catch{res(null)}})}
+function idbAll(){return new Promise(res=>{if(!idb)return res({});const out={};try{const r=idb.transaction('p').objectStore('p').openCursor();r.onsuccess=()=>{const c=r.result;if(c){out[c.key]=c.value;c.continue()}else res(out)};r.onerror=()=>res(out)}catch{res(out)}})}
+const idbTx=fn=>new Promise(res=>{if(!idb)return res(false);try{const tx=idb.transaction('p','readwrite');fn(tx.objectStore('p'));tx.oncomplete=()=>res(true);tx.onerror=tx.onabort=()=>res(false)}catch{res(false)}});
+async function storeImage(dataUrl){if(!idb)return dataUrl;const k='idb:'+uid()+uid();if(!(await idbTx(s=>s.put(dataUrl,k))))return dataUrl;IMG[k]=dataUrl;return k}
+function dropImage(ref){if(isRef(ref)){delete IMG[ref];idbTx(s=>s.delete(ref))}}
+const exportData=()=>{const d=JSON.parse(JSON.stringify(S));d.items.forEach(i=>{if(isRef(i.image))i.image=IMG[i.image]||''});return d};
+/* replace the whole list with a backup/Drive copy (pictures inline), moving pictures into IndexedDB */
+async function adopt(d){
+  const old=S?S.items.map(i=>i.image):[];
+  const N=Object.assign(defaults(),d);N.ui=Object.assign({folder:'all',view:'gallery'},N.ui||{});
+  for(const it of N.items)if(typeof it.image==='string'&&it.image.startsWith('data:'))it.image=await storeImage(it.image);
+  old.forEach(dropImage);S=N;
+  if(S.ui.folder!=='all'&&!S.folders.some(f=>f.id===S.ui.folder))S.ui.folder='all';
+}
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){dlg('Could not save','This browser refused to store the list (storage is full or blocked). Make a backup from the ⇅ button.',false,'','OK')}}
+function save(){S.updatedAt=Date.now();persist();gdSchedule()}
 function load(){try{const t=localStorage.getItem(KEY);return t?JSON.parse(t):{}}catch{return {}}}
 
 /* ---- render ---- */
@@ -196,7 +246,8 @@ function card(it,compact){
   const vs=it.variants||[];
   const vsel=vs.length?`<select class="sel s" aria-label="Variant" data-f="variant" data-id="${it.id}">${vs.map((v,i)=>`<option value="${i}" ${i===it.variant?'selected':''}>${esc(v.name)}${hasP(v)?' · '+fmt(parseFloat(v.price)):''}</option>`).join('')}</select>`:'';
   const g=gid(it),fo=S.folders.find(x=>x.id===it.folderId),u=unit(it),q=it.qty||1;
-  const thumb=`<div class="thumb">&#9825;${it.image?`<img src="${esc(it.image)}" alt="" onerror="this.remove()">`:''}${!compact?`<span class="badge ${g}"><span class="dot"></span>${esc(gname(g))}</span>`:''}</div>`;
+  const im=imgSrc(it);
+  const thumb=`<div class="thumb">&#9825;${im?`<img src="${esc(im)}" alt="" onerror="this.remove()">`:''}${!compact?`<span class="badge ${g}"><span class="dot"></span>${esc(gname(g))}</span>`:''}</div>`;
   const title=it.url?`<a class="ttl" href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title||'Untitled')}</a>`:`<span class="ttl">${esc(it.title||'Untitled')}</span>`;
   const qty=`<div class="qty"><button aria-label="Less" data-act="dec" data-id="${it.id}">&minus;</button><span>${q}</span><button aria-label="More" data-act="inc" data-id="${it.id}">+</button></div>`;
   const price=`<div class="price">${fmt(u*q)}${q>1?`<small>${fmt(u)} each</small>`:''}</div>`;
@@ -224,16 +275,17 @@ function renderContent(){
 
 /* ---- in-page prompts (browser prompt/confirm are blocked here) ---- */
 const ask=$('#ask');
-function dlg(title,msg,withInput,val,okLabel){return new Promise(res=>{
+/* resolves true (OK), false (the second button) or undefined (dismissed) */
+function dlg(title,msg,withInput,val,okLabel,noLabel){return new Promise(res=>{
   $('#askT').textContent=title;$('#askM').textContent=msg||'';
   const i=$('#askI');i.style.display=withInput?'':'none';i.value=val||'';
-  $('#askOk').textContent=okLabel||'OK';
+  $('#askOk').textContent=okLabel||'OK';$('#askNo').textContent=noLabel||'Cancel';
   let done=false;const fin=v=>{if(done)return;done=true;if(ask.open)ask.close();res(v)};
   $('#askOk').onclick=()=>fin(withInput?i.value:true);
   $('#askNo').onclick=()=>fin(withInput?null:false);
   i.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();fin(i.value)}};
-  ask.onclose=()=>fin(withInput?null:false);
-  ask.onclick=e=>{if(e.target===ask)fin(withInput?null:false)};
+  ask.onclose=()=>fin(withInput?null:undefined);
+  ask.onclick=e=>{if(e.target===ask)fin(withInput?null:undefined)};
   ask.showModal();if(withInput)i.focus();
 })}
 const prompt2=(t,v)=>dlg(t,'',true,v,'Save');
@@ -249,7 +301,7 @@ document.addEventListener('click',async e=>{
   else if(act==='delfolder'&&f){if(await confirm2(`Delete folder “${f.name}”? Its items stay in All items.`)){S.items.forEach(i=>{if(i.folderId===f.id)i.folderId=null});S.folders=S.folders.filter(x=>x.id!==f.id);S.ui.folder='all';save();render()}}
   else if(act==='rengroup'){const g=S.groups.find(x=>x.id===id);const v=await prompt2('Rename group',g.name);if(v&&v.trim()){g.name=v.trim();save();render()}}
   else if(act==='edit')openModal(id);
-  else if(act==='del'){if(await confirm2(`Remove “${it.title||'this item'}”?`)){S.items=S.items.filter(i=>i.id!==id);save();render()}}
+  else if(act==='del'){if(await confirm2(`Remove “${it.title||'this item'}”?`)){dropImage(it.image);S.items=S.items.filter(i=>i.id!==id);save();render()}}
   else if(act==='inc'){it.qty=(it.qty||1)+1;save();render()}
   else if(act==='dec'){it.qty=Math.max(1,(it.qty||1)-1);save();render()}
 });
@@ -270,15 +322,15 @@ function varRow(v={name:'',price:''}){
   const d=document.createElement('div');d.className='vr';
   d.innerHTML=`<input class="in" placeholder="e.g. Large / Black" value="${esc(v.name)}"><input class="in" inputmode="decimal" placeholder="Price" value="${v.price==null?'':esc(v.price)}"><button type="button" class="ico" aria-label="Remove variant">&times;</button>`;
   d.querySelector('button').onclick=()=>d.remove();$('#vlist').appendChild(d)}
-function setImg(v){modal._img=v||'';const i=$('#pvImg');i.style.visibility=v?'visible':'hidden';if(v)i.src=v}
+function setImg(v){modal._img=v||'';const s=isRef(v)?(IMG[v]||''):(v||''),i=$('#pvImg');i.style.visibility=s?'visible':'hidden';if(s)i.src=s}
 function mst(t,err){const s=$('#mst');s.textContent=t||'';s.className='st'+(err?' err':'')}
 function loadPhoto(file){
   if(!file||!file.type.startsWith('image/'))return;
   const url=URL.createObjectURL(file),img=new Image();
-  img.onload=()=>{const k=Math.min(1,640/Math.max(img.width,img.height)),c=document.createElement('canvas');
+  img.onload=()=>{const k=Math.min(1,560/Math.max(img.width,img.height)),c=document.createElement('canvas');
     c.width=Math.max(1,Math.round(img.width*k));c.height=Math.max(1,Math.round(img.height*k));
     const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(img,0,0,c.width,c.height);
-    URL.revokeObjectURL(url);setImg(c.toDataURL('image/jpeg',0.8));mst('')};
+    URL.revokeObjectURL(url);setImg(c.toDataURL('image/jpeg',0.75));mst('')};
   img.onerror=()=>{URL.revokeObjectURL(url);mst('Could not read that image.',true)};
   img.src=url}
 $('#upBtn').onclick=()=>$('#f_file').click();
@@ -298,14 +350,19 @@ function openModal(id){
 }
 $('#addVar').onclick=()=>varRow();
 $('#mCancel').onclick=()=>modal.close();
-$('#mSave').onclick=()=>{
+$('#mSave').onclick=async()=>{
   let url=$('#f_url').value.trim(),title=$('#f_title').value.trim();
   if(!title&&!url){mst('Add a name or a link first.',true);return}
   if(url&&!/^https?:\/\//i.test(url))url='https://'+url;
   if(!title)title=host(url)||'Untitled';
   const variants=[...document.querySelectorAll('#vlist .vr')].map(r=>{const i=r.querySelectorAll('input');return{name:i[0].value.trim(),price:i[1].value.trim()}}).filter(v=>v.name);
+  $('#mSave').disabled=true;
+  let image=modal._img||'';
+  if(image.startsWith('data:'))image=await storeImage(image);
+  if(editing&&editing.image!==image)dropImage(editing.image);
+  $('#mSave').disabled=false;
   const o=editing||{id:uid(),added:Date.now(),bought:false};
-  Object.assign(o,{url,title,image:modal._img||'',price:$('#f_price').value.trim(),qty:Math.max(1,parseInt($('#f_qty').value)||1),variants,
+  Object.assign(o,{url,title,image,price:$('#f_price').value.trim(),qty:Math.max(1,parseInt($('#f_qty').value)||1),variants,
     variant:variants.length?Math.min(modal._variant||0,variants.length-1):0,folderId:$('#f_folder').value||null,group:$('#f_group').value});
   if(!editing)S.items.unshift(o);
   save();render();modal.close();
@@ -314,21 +371,121 @@ modal.addEventListener('click',e=>{if(e.target===modal)modal.close()});
 
 /* ---- backup ---- */
 const bk=$('#bk'),bs=(t,err)=>{const s=$('#bkSt');s.textContent=t||'';s.className='st'+(err?' err':'')};
-$('#bkBtn').onclick=()=>{$('#bkText').value=JSON.stringify(S);bs('');bk.showModal()};
+$('#bkBtn').onclick=()=>{bs('');gdSt('');$('#gdId').value=gd.clientId||'';gdUi();bk.showModal()};
 $('#bkClose').onclick=()=>bk.close();
-$('#bkCopy').onclick=async()=>{const t=$('#bkText');t.value=JSON.stringify(S);
-  try{await navigator.clipboard.writeText(t.value);bs('Backup copied.')}catch{t.select();bs('Select all and copy the text above.')}};
-$('#bkRestore').onclick=async()=>{
-  try{const d=JSON.parse($('#bkText').value);if(!d||!Array.isArray(d.items))throw 0;
+$('#bkDl').onclick=()=>{
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(exportData())],{type:'application/json'}));
+  a.download='wishlist-backup-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);bs('Backup file saved. If nothing downloaded, use “Copy as text” instead.')};
+$('#bkCopy').onclick=async()=>{const t=JSON.stringify(exportData());
+  try{await navigator.clipboard.writeText(t);bs('Backup copied.')}catch{$('#bkDet').open=true;const x=$('#bkText');x.value=t;x.select();bs('Select all and copy the text below.')}};
+async function restoreFrom(text){
+  try{const d=JSON.parse(text);if(!d||!Array.isArray(d.items))throw 0;
     if(!(await confirm2('Replace your current wishlist with this backup?','Replace')))return;
-    S=Object.assign(defaults(),d);S.ui=Object.assign({folder:'all',view:'gallery'},S.ui||{});save();render();bk.close()}
-  catch{bs('That text isn’t a valid backup.',true)}};
+    await adopt(d);save();render();bs('Restored.')}
+  catch{bs('That isn’t a valid backup.',true)}}
+$('#bkRestore').onclick=()=>restoreFrom($('#bkText').value);
+$('#bkLoad').onclick=()=>$('#bkFile').click();
+$('#bkFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)restoreFrom(await f.text())};
 bk.addEventListener('click',e=>{if(e.target===bk)bk.close()});
 
+/* ---- Google Drive sync ----
+   Uses the hidden "app data" folder (scope drive.appdata): this page can only see its own file, never your other Drive files.
+   The access token lasts about an hour, so after that you tap the cloud badge once to sign in again. */
+const GD_KEY='wishlist_gdrive',SCOPE='https://www.googleapis.com/auth/drive.appdata',FNAME='wishlist.json';
+const gd={clientId:'',on:false,fileId:'',remoteMod:'',tok:'',exp:0};let gdTimer=null,gdBusy=false;
+try{const c=JSON.parse(localStorage.getItem(GD_KEY)||'{}');gd.clientId=c.clientId||'';gd.on=!!c.on;gd.fileId=c.fileId||'';gd.remoteMod=c.remoteMod||''}catch{}
+const gdCfg=()=>{try{localStorage.setItem(GD_KEY,JSON.stringify({clientId:gd.clientId,on:gd.on,fileId:gd.fileId,remoteMod:gd.remoteMod}))}catch{}};
+const gdSt=(t,err)=>{const s=$('#gdSt');s.textContent=t||'';s.className='st'+(err?' err':'')};
+function gdBadge(s,e){const b=$('#gdBadge');b.hidden=!gd.on;
+  b.textContent={ok:'☁ Synced',pending:'☁ Saving…',busy:'☁ Syncing…',auth:'☁ Tap to sign in',err:'☁ Sync failed · retry'}[s]||'';b.title=(e&&e.message)||''}
+function gdUi(){const on=gd.on;$('#gdConnect').textContent=on?'Reconnect':'Connect Google Drive';
+  ['gdPush','gdPull','gdOff'].forEach(i=>$('#'+i).hidden=!on);
+  $('#gdOrigin').textContent=location.origin;
+  $('#gdWarn').textContent=(location.protocol==='file:'||location.origin==='null')?'This page is open from a file or a sandbox, and Google sign-in does not work there. Open it from a web address (https://… or http://localhost) first.':'';
+  if(on)gdSt('Connected. Changes upload a few seconds after you make them.')}
+function loadGIS(){return new Promise((res,rej)=>{
+  if(window.google&&google.accounts&&google.accounts.oauth2)return res();
+  const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.onload=()=>res();
+  s.onerror=()=>rej(new Error('Could not reach Google sign-in. Check your connection, or this page may be blocked from loading it.'));document.head.appendChild(s)})}
+async function getToken(interactive){
+  if(gd.tok&&Date.now()<gd.exp-60000)return gd.tok;
+  await loadGIS();
+  return new Promise((res,rej)=>{
+    const c=google.accounts.oauth2.initTokenClient({client_id:gd.clientId,scope:SCOPE,
+      callback:r=>{if(r.error)return rej(new Error(r.error_description||r.error));gd.tok=r.access_token;gd.exp=Date.now()+(r.expires_in||3600)*1000;res(gd.tok)},
+      error_callback:e=>rej(new Error(e&&e.type==='popup_blocked_by_browser'?'The sign-in popup was blocked. Allow popups for this page and try again.':'Sign-in was cancelled or needs you to tap.'))});
+    c.requestAccessToken(interactive?{}:{prompt:'none'})})}
+async function gdFetch(url,opt,interactive){
+  const t=await getToken(interactive);opt=opt||{};
+  const r=await fetch(url,Object.assign({},opt,{headers:Object.assign({Authorization:'Bearer '+t},opt.headers||{})}));
+  if(r.status===401){gd.tok='';gd.exp=0}
+  if(!r.ok){const e=new Error(r.status===403?'Google refused access. Check that the Drive API is enabled and your Gmail is a test user.':'Google Drive error '+r.status);e.status=r.status;throw e}
+  return r}
+async function gdFind(i){
+  if(gd.fileId){try{return await (await gdFetch(`https://www.googleapis.com/drive/v3/files/${gd.fileId}?fields=id,modifiedTime`,{},i)).json()}catch(e){if(e.status!==404)throw e;gd.fileId=''}}
+  const q=encodeURIComponent(`name='${FNAME}'`);
+  const r=await gdFetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&orderBy=modifiedTime%20desc&fields=files(id,modifiedTime)`,{},i);
+  return ((await r.json()).files||[])[0]||null}
+async function gdPush(f,i){
+  if(!f){const r=await gdFetch('https://www.googleapis.com/drive/v3/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:FNAME,parents:['appDataFolder']})},i);f=await r.json()}
+  const r=await gdFetch(`https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=media&fields=id,modifiedTime`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(exportData())},i);
+  const o=await r.json();gd.fileId=o.id;gd.remoteMod=o.modifiedTime||'';gdCfg()}
+/* Compare with Drive and push or pull as needed. Returns 'pulled' | 'pushed' | 'skipped' */
+async function gdSync(i,full){
+  const f=await gdFind(i);
+  if(f&&(full||f.modifiedTime!==gd.remoteMod)){
+    const remote=await (await gdFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`,{},i)).json();
+    const rt=+remote.updatedAt||0,lt=+S.updatedAt||0;
+    if(remote&&Array.isArray(remote.items)&&rt>lt){
+      let use=true;
+      if(S.items.length){const when=t=>t?new Date(t).toLocaleString():'never';
+        use=await dlg('Two versions found',`Google Drive has a newer list (${when(rt)}) than this device (${when(lt)}). Which one do you want to keep?`,false,'','Use Drive copy','Keep this device')}
+      if(use===true){await adopt(remote);gd.fileId=f.id;gd.remoteMod=f.modifiedTime;gdCfg();persist();render();return 'pulled'}
+      if(use!==false)return 'skipped'}
+    else if(rt===lt&&remote&&Array.isArray(remote.items)){gd.fileId=f.id;gd.remoteMod=f.modifiedTime;gdCfg();return 'pushed'}}
+  await gdPush(f,i);return 'pushed'}
+function gdSchedule(){if(!gd.on||!gd.clientId)return;clearTimeout(gdTimer);gdBadge('pending');gdTimer=setTimeout(gdAuto,4000)}
+async function gdAuto(){
+  if(gdBusy){gdSchedule();return}gdBusy=true;
+  try{await gdSync(false,false);gdBadge('ok')}catch(e){gdBadge(!gd.tok||e.status===401?'auth':'err',e)}
+  gdBusy=false}
+$('#gdBadge').onclick=async()=>{if(gdBusy)return;gdBusy=true;gdBadge('busy');
+  try{await gdSync(true,true);gdBadge('ok')}catch(e){gdBadge(!gd.tok||e.status===401?'auth':'err',e)}gdBusy=false};
+$('#gdConnect').onclick=async()=>{
+  const id=$('#gdId').value.trim();
+  if(!/\.apps\.googleusercontent\.com$/.test(id)){gdSt('Paste your OAuth client ID first (it ends in .apps.googleusercontent.com).',true);return}
+  gd.clientId=id;gd.tok='';gd.exp=0;gdSt('Opening Google sign-in…');$('#gdConnect').disabled=true;
+  try{gd.on=true;const how=await gdSync(true,true);gdCfg();gdUi();gdBadge('ok');
+    gdSt(how==='pulled'?'Connected. Loaded your list from Drive.':how==='skipped'?'Connected, but nothing was changed yet.':'Connected. Your list is saved to Drive and will stay in sync.')}
+  catch(e){gd.on=false;gdCfg();gdUi();gdBadge('');gdSt(e.message||String(e),true)}
+  $('#gdConnect').disabled=false};
+$('#gdPush').onclick=async()=>{gdSt('Saving…');try{await gdPush(await gdFind(true),true);gdBadge('ok');gdSt('Saved to Drive.')}catch(e){gdSt(e.message,true)}};
+$('#gdPull').onclick=async()=>{
+  try{const f=await gdFind(true);if(!f){gdSt('There is no copy in Drive yet.',true);return}
+    if(!(await confirm2('Replace the list on this device with the Drive copy?','Replace')))return;
+    const remote=await (await gdFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`,{},true)).json();
+    if(!remote||!Array.isArray(remote.items))throw new Error('The Drive copy isn’t a valid wishlist.');
+    await adopt(remote);gd.remoteMod=f.modifiedTime;gdCfg();persist();render();gdSt('Loaded from Drive.')}
+  catch(e){gdSt(e.message,true)}};
+$('#gdOff').onclick=()=>{gd.on=false;gd.tok='';gd.exp=0;gdCfg();gdUi();gdBadge('');gdSt('Disconnected. The copy in Drive is left as it was.')};
+
 /* ---- start ---- */
-S=Object.assign(defaults(),load());S.ui=Object.assign({folder:'all',view:'gallery'},S.ui||{});
-if(S.ui.folder!=='all'&&!S.folders.some(f=>f.id===S.ui.folder))S.ui.folder='all';
-render();
+(async()=>{
+  idb=await idbOpen();Object.assign(IMG,await idbAll());
+  S=Object.assign(defaults(),load());S.ui=Object.assign({folder:'all',view:'gallery'},S.ui||{});
+  if(S.ui.folder!=='all'&&!S.folders.some(f=>f.id===S.ui.folder))S.ui.folder='all';
+  if(idb){
+    let moved=false;
+    /* older versions kept pictures inside localStorage; move them to IndexedDB */
+    for(const it of S.items)if(typeof it.image==='string'&&it.image.startsWith('data:')){it.image=await storeImage(it.image);moved=true}
+    if(S.items.length){const used=new Set(S.items.map(i=>i.image));Object.keys(IMG).forEach(k=>{if(!used.has(k)){delete IMG[k];idbTx(s=>s.delete(k))}})}
+    if(moved){if(!S.updatedAt)S.updatedAt=Date.now();persist()}}
+  render();
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch{}
+  if(gd.on&&gd.clientId){gdBadge('busy');gdBusy=true;
+    try{await gdSync(false,false);gdBadge('ok')}catch(e){gdBadge('auth',e)}gdBusy=false}
+})();
 </script>
 </body>
 </html>
