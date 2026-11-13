@@ -415,12 +415,20 @@ async function getToken(interactive){
     const c=google.accounts.oauth2.initTokenClient({client_id:gd.clientId,scope:SCOPE,
       callback:r=>{if(r.error)return rej(new Error(r.error_description||r.error));gd.tok=r.access_token;gd.exp=Date.now()+(r.expires_in||3600)*1000;res(gd.tok)},
       error_callback:e=>rej(new Error(e&&e.type==='popup_blocked_by_browser'?'The sign-in popup was blocked. Allow popups for this page and try again.':'Sign-in was cancelled or needs you to tap.'))});
-    c.requestAccessToken(interactive?{}:{prompt:'none'})})}
+    c.requestAccessToken(interactive?(gd.reconsent?{prompt:'consent'}:{}):{prompt:'none'});gd.reconsent=false})}
 async function gdFetch(url,opt,interactive){
   const t=await getToken(interactive);opt=opt||{};
   const r=await fetch(url,Object.assign({},opt,{headers:Object.assign({Authorization:'Bearer '+t},opt.headers||{})}));
   if(r.status===401){gd.tok='';gd.exp=0}
-  if(!r.ok){const e=new Error(r.status===403?'Google refused access. Check that the Drive API is enabled and your Gmail is a test user.':'Google Drive error '+r.status);e.status=r.status;throw e}
+  if(!r.ok){
+    let reason='',msg='';try{const j=await r.json();const er=j.error||{};msg=er.message||'';reason=((er.errors||[])[0]||{}).reason||er.status||''}catch{}
+    const key=(reason+' '+msg).toLowerCase();
+    let text;
+    if(/insufficient|scope/.test(key)){gd.reconsent=true;text='Signed in, but the Drive permission was not granted. Tap Connect again and make sure the Drive box is ticked on Google’s permission screen.'}
+    else if(/quota/.test(key)&&/storage/.test(key))text='That Google account’s Drive storage is full.';
+    else if(/accessnotconfigured|service_disabled|has not been used|is disabled/.test(key))text='The Drive API isn’t enabled for this client’s Google Cloud project yet (or hasn’t taken effect). Enable it, wait a minute, and retry.';
+    else text=`Google Drive said no (${r.status}${reason?', '+reason:''})${msg?': '+msg:''}`;
+    const e=new Error(text);e.status=r.status;throw e}
   return r}
 /* tolerant readers: an empty or damaged reply never throws */
 async function rj(r){const t=await r.text();try{return t?JSON.parse(t):{}}catch{return {}}}
@@ -463,7 +471,7 @@ $('#gdBadge').onclick=async()=>{if(gdBusy)return;gdBusy=true;gdBadge('busy');
 $('#gdConnect').onclick=async()=>{
   const id=$('#gdId').value.trim();
   if(!/\.apps\.googleusercontent\.com$/.test(id)){gdSt('Paste your OAuth client ID first (it ends in .apps.googleusercontent.com).',true);return}
-  gd.clientId=id;gd.tok='';gd.exp=0;gdSt('Opening Google sign-in…');$('#gdConnect').disabled=true;
+  gd.clientId=id;gd.tok='';gd.exp=0;gd.reconsent=true;gdSt('Opening Google sign-in…');$('#gdConnect').disabled=true;
   try{gd.on=true;const how=await gdSync(true,true);gdCfg();gdUi();gdBadge('ok');
     gdSt(how==='pulled'?'Connected. Loaded your list from Drive.':how==='skipped'?'Connected, but nothing was changed yet.':'Connected. Your list is saved to Drive and will stay in sync.')}
   catch(e){gd.on=false;gdCfg();gdUi();gdBadge('');gdSt(e.message||String(e),true)}
