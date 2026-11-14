@@ -108,6 +108,19 @@ textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
 .sec ol{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:13px}
 .sec summary{cursor:pointer;color:var(--accent);font-size:13px;margin-top:6px}
 .sec code{background:var(--hover);padding:1px 5px;border-radius:5px;word-break:break-all}
+.scroll[hidden],#summary[hidden]{display:none}
+.ttl.lnk{color:var(--accent);cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+.btn.s{padding:6px 10px;font-size:13px;border-radius:9px}
+.btn.wide{width:100%}
+.fch small{opacity:.65;margin-left:6px}
+.col h3{flex-wrap:wrap;row-gap:6px}
+.col h3 .gn{cursor:pointer;touch-action:manipulation}
+.col h3 .e{font-size:15px;width:30px;height:30px;border-radius:8px}
+.col h3 .e:active{background:var(--panel)}
+.col h3 .all{margin-left:auto}
+#toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom,0px));transform:translate(-50%,16px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;box-shadow:var(--sh);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:20;max-width:92vw;display:flex;gap:14px;align-items:center}
+#toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+#toast button{border:0;background:none;color:inherit;font-weight:700;text-decoration:underline;padding:0}
 </style>
 </head>
 <body>
@@ -121,6 +134,7 @@ textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
 <section id="summary"></section>
 <section id="content"></section>
 <button class="fab" id="addItem">+ Add item</button>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <dialog id="modal">
   <div class="mh" id="mTitle">Add item</div>
@@ -129,9 +143,9 @@ textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
     <div class="f"><label>Product link (optional)</label><input class="in" id="f_url" inputmode="url" autocapitalize="off" placeholder="Paste a product link"></div>
     <div class="f"><label>Picture</label>
       <div class="pv"><img id="pvImg" alt="">
-        <div class="pvb"><button type="button" class="btn" id="upBtn">Add photo</button><button type="button" class="btn" id="rmImg">Remove</button></div>
+        <div class="pvb"><button type="button" class="btn" id="upBtn">Add photo</button><button type="button" class="btn" id="rmImg">Remove</button><button type="button" class="btn" id="uncrop" hidden>Use full image</button></div>
         <input type="file" id="f_file" accept="image/*" hidden></div>
-      <div class="st">Choose a photo or take one. You can also paste a screenshot.</div></div>
+      <div class="st">Choose a photo or take one. You can also paste a screenshot. Full-screen screenshots are cropped to the product picture automatically.</div></div>
     <div class="row">
       <div class="f"><label>Price (&#8369;)</label><input class="in" id="f_price" inputmode="decimal" placeholder="0.00"></div>
       <div class="f"><label>Quantity</label><input class="in" id="f_qty" type="number" inputmode="numeric" min="1" value="1"></div>
@@ -189,13 +203,18 @@ const GROUPS=['g1','g2','g3','none'],KEY='wishlist_v1';
 let S,ui={q:'',adding:false},editing=null;
 
 const defaults=()=>({folders:[],groups:[{id:'g1',name:'Buy first'},{id:'g2',name:'Can wait'},{id:'g3',name:'Buy last'}],items:[],ui:{folder:'all',view:'gallery'}});
-const gname=id=>id==='none'?'Unsorted':((S.groups.find(g=>g.id===id)||{}).name||id);
+const gname=id=>(S.groups.find(g=>g.id===id)||{}).name||(id==='none'?'Unsorted':id);
+/* tidy a freshly loaded list: Unsorted is renameable too, bought items are always Unsorted, and the folder row must point somewhere real */
+function norm(){
+  if(!S.groups.some(g=>g.id==='none'))S.groups.push({id:'none',name:'Unsorted'});
+  S.items.forEach(i=>{if(i.bought&&i.group!=='none')i.group='none'});
+  if(!['all','bought'].includes(S.ui.folder)&&!S.folders.some(f=>f.id===S.ui.folder))S.ui.folder='all';
+}
 const gid=it=>GROUPS.includes(it.group)?it.group:'none';
 const host=u=>{try{return new URL(u).hostname.replace(/^www\./,'')}catch{return ''}};
 const hasP=v=>v&&v.price!==''&&v.price!=null&&isFinite(parseFloat(v.price));
 const unit=it=>{const v=(it.variants||[])[it.variant];return hasP(v)?parseFloat(v.price):n(it.price)};
 const line=it=>unit(it)*(it.qty||1);
-const counted=it=>!it.bought;
 
 /* ---- storage (this browser only) ----
    The list itself (text) lives in localStorage. Pictures live in IndexedDB, which has far more room.
@@ -214,63 +233,87 @@ async function adopt(d){
   const old=S?S.items.map(i=>i.image):[];
   const N=Object.assign(defaults(),d);N.ui=Object.assign({folder:'all',view:'gallery'},N.ui||{});
   for(const it of N.items)if(typeof it.image==='string'&&it.image.startsWith('data:'))it.image=await storeImage(it.image);
-  old.forEach(dropImage);S=N;
-  if(S.ui.folder!=='all'&&!S.folders.some(f=>f.id===S.ui.folder))S.ui.folder='all';
+  old.forEach(dropImage);S=N;norm();
 }
-function persist(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){dlg('Could not save','This browser refused to store the list (storage is full or blocked). Make a backup from the ⇅ button.',false,'','OK')}}
+/* with Google Drive connected, the list is kept there too, so a refusal from this browser is not worth a warning */
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){if(gd.on)return;dlg('Could not save','This browser refused to store the list (storage is full or blocked). Make a backup from the ⇅ button.',false,'','OK')}}
 function save(){S.updatedAt=Date.now();persist();gdSchedule()}
 function load(){try{const t=localStorage.getItem(KEY);return t?JSON.parse(t):{}}catch{return {}}}
 
 /* ---- render ---- */
-function scope(){const f=S.ui.folder,q=ui.q.toLowerCase();return S.items.filter(i=>(f==='all'||i.folderId===f)&&(!q||(i.title||'').toLowerCase().includes(q)))}
-function render(){renderNav();renderSummary();renderContent();
+const inBought=()=>S.ui.view!=='priority'&&S.ui.folder==='bought';
+function scope(){
+  const v=S.ui.view,f=S.ui.folder,q=ui.q.toLowerCase();
+  return S.items.filter(i=>{
+    if(q&&!(i.title||'').toLowerCase().includes(q))return false;
+    if(v==='priority')return !i.bought;            /* priority groups cover every folder */
+    if(f==='bought')return !!i.bought;
+    return !i.bought&&(f==='all'||i.folderId===f)})}
+function render(){
+  $('#nav').hidden=S.ui.view==='priority';           /* the folder row only belongs to the gallery */
+  renderNav();renderSummary();renderContent();
   const c=scope().length;$('#subtitle').textContent=c+(c===1?' item':' items');
   document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.view===S.ui.view))}
 function renderNav(){
-  const f=S.ui.folder;
+  const f=S.ui.folder,nb=S.items.filter(i=>i.bought).length;
   let h=`<button class="fch ${f==='all'?'on':''}" data-act="folder" data-id="all">All items</button>`+
+  `<button class="fch ${f==='bought'?'on':''}" data-act="folder" data-id="bought">✓ Bought${nb?`<small>${nb}</small>`:''}</button>`+
   S.folders.map(x=>`<button class="fch ${f===x.id?'on':''}" data-act="folder" data-id="${x.id}">${esc(x.name)}</button>`).join('');
-  if(f!=='all')h+=`<button class="fch add" data-act="renfolder">Rename</button><button class="fch add" data-act="delfolder">Delete</button>`;
+  if(f!=='all'&&f!=='bought')h+=`<button class="fch add" data-act="renfolder">Rename</button><button class="fch add" data-act="delfolder">Delete</button>`;
   h+=`<button class="fch add" data-act="newfolder">+ Folder</button>`;
   $('#nav').innerHTML=h;
   const on=$('#nav .on');if(on&&on.scrollIntoView)on.scrollIntoView({inline:'nearest',block:'nearest'});
 }
 function renderSummary(){
-  const items=scope().filter(counted);
+  const el=$('#summary');
+  if(inBought()){el.hidden=true;el.innerHTML='';return}   /* the Bought section has no totals */
+  el.hidden=false;
+  const items=scope();
   let h=`<div class="chip total"><div class="l">Total to buy</div><div class="v">${fmt(items.reduce((a,i)=>a+line(i),0))}</div></div>`;
   for(const g of GROUPS){const its=items.filter(i=>gid(i)===g);if(g==='none'&&!its.length)continue;
     h+=`<div class="chip ${g}"><div class="l"><span class="dot"></span>${esc(gname(g))}</div><div class="v">${fmt(its.reduce((a,i)=>a+line(i),0))}</div></div>`}
-  $('#summary').innerHTML=h;
+  el.innerHTML=h;
 }
-function card(it,compact){
+function card(it,compact,inB){
   const vs=it.variants||[];
   const vsel=vs.length?`<select class="sel s" aria-label="Variant" data-f="variant" data-id="${it.id}">${vs.map((v,i)=>`<option value="${i}" ${i===it.variant?'selected':''}>${esc(v.name)}${hasP(v)?' · '+fmt(parseFloat(v.price)):''}</option>`).join('')}</select>`:'';
   const g=gid(it),fo=S.folders.find(x=>x.id===it.folderId),u=unit(it),q=it.qty||1;
   const im=imgSrc(it);
-  const thumb=`<div class="thumb">&#9825;${im?`<img src="${esc(im)}" alt="" onerror="this.remove()">`:''}${!compact?`<span class="badge ${g}"><span class="dot"></span>${esc(gname(g))}</span>`:''}</div>`;
-  const title=it.url?`<a class="ttl" href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title||'Untitled')}</a>`:`<span class="ttl">${esc(it.title||'Untitled')}</span>`;
+  const thumb=`<div class="thumb">&#9825;${im?`<img src="${esc(im)}" alt="" onerror="this.remove()">`:''}${!compact&&!inB?`<span class="badge ${g}"><span class="dot"></span>${esc(gname(g))}</span>`:''}</div>`;
+  const title=it.url?`<span class="ttl lnk" data-open="${it.id}" title="Double-tap to open the link">${esc(it.title||'Untitled')}</span>`:`<span class="ttl">${esc(it.title||'Untitled')}</span>`;
+  const hostLine=it.url?`<div class="host">🔗 ${esc(host(it.url))}</div>`:'';
   const qty=`<div class="qty"><button aria-label="Less" data-act="dec" data-id="${it.id}">&minus;</button><span>${q}</span><button aria-label="More" data-act="inc" data-id="${it.id}">+</button></div>`;
   const price=`<div class="price">${fmt(u*q)}${q>1?`<small>${fmt(u)} each</small>`:''}</div>`;
   const gsel=`<select class="sel s" aria-label="Priority group" data-f="group" data-id="${it.id}">${GROUPS.map(x=>`<option value="${x}" ${x===g?'selected':''}>${esc(gname(x))}</option>`).join('')}</select>`;
-  const chk=`<label class="chk"><input type="checkbox" data-f="bought" data-id="${it.id}" ${it.bought?'checked':''}>${compact?'Bought':'Already bought'}</label>`;
-  if(compact)return `<article class="card compact ${it.bought?'bought':''}">${thumb}<div class="body">${title}${vsel}<div class="prow">${price}${qty}</div>${gsel}
-    <div class="foot">${chk}<span style="flex:1"></span><button class="ico" aria-label="Edit" data-act="edit" data-id="${it.id}">&#9998;</button></div></div></article>`;
-  return `<article class="card ${it.bought?'bought':''}">${thumb}<div class="body">${title}${it.url?`<div class="host">${esc(host(it.url))}</div>`:''}${vsel}
+  const edit=`<button class="ico" aria-label="Edit" data-act="edit" data-id="${it.id}">&#9998;</button>`;
+  const del=`<button class="ico" aria-label="Delete" data-act="del" data-id="${it.id}">&times;</button>`;
+  if(inB)return `<article class="card">${thumb}<div class="body">${title}${hostLine}${vsel}<div class="prow">${price}</div>${fo?`<span class="tag">${esc(fo.name)}</span>`:''}
+    <div class="foot"><button class="btn s" style="flex:1" data-act="again" data-id="${it.id}">&#8634; Buy again</button>${edit}${del}</div></div></article>`;
+  if(compact)return `<article class="card compact">${thumb}<div class="body">${title}${vsel}<div class="prow">${price}${qty}</div>${gsel}
+    <div class="foot"><button class="btn s" data-act="bought" data-id="${it.id}">✓ Bought</button><span style="flex:1"></span>${edit}</div></div></article>`;
+  return `<article class="card">${thumb}<div class="body">${title}${hostLine}${vsel}
     <div class="prow">${price}${qty}</div>${fo&&S.ui.folder==='all'?`<span class="tag">${esc(fo.name)}</span>`:''}
-    <div class="foot">${gsel}<button class="ico" aria-label="Edit" data-act="edit" data-id="${it.id}">&#9998;</button><button class="ico" aria-label="Delete" data-act="del" data-id="${it.id}">&times;</button></div>${chk}</div></article>`;
+    <div class="foot">${gsel}${edit}${del}</div><button class="btn s wide" data-act="bought" data-id="${it.id}">✓ Mark as bought</button></div></article>`;
 }
 function renderContent(){
-  const items=scope(),el=$('#content');
-  if(!items.length){el.innerHTML=`<div class="empty"><h2>${S.items.length?'Nothing here':'Your wishlist is empty'}</h2><div>${S.items.length?'Try another folder or search.':'Tap “Add item” to add your first product.'}</div></div>`;return}
+  const items=scope(),el=$('#content'),b=inBought();
+  if(!items.length){
+    let t;
+    if(b)t=['Nothing bought yet','Tap “Mark as bought” on an item and it moves here.'];
+    else if(!S.items.length)t=['Your wishlist is empty','Tap “Add item” to add your first product.'];
+    else if(S.items.every(i=>i.bought))t=['Everything is bought','Add a new item, or open Bought to buy something again.'];
+    else t=['Nothing here','Try another folder or search.'];
+    el.innerHTML=`<div class="empty"><h2>${t[0]}</h2><div>${t[1]}</div></div>`;return}
   if(S.ui.view==='gallery'){
-    el.innerHTML=`<div class="grid">${[...items].sort((a,b)=>GROUPS.indexOf(gid(a))-GROUPS.indexOf(gid(b))).map(i=>card(i,false)).join('')}</div>`;return}
+    const sorted=b?[...items].sort((x,y)=>(y.boughtAt||0)-(x.boughtAt||0)):[...items].sort((x,y)=>GROUPS.indexOf(gid(x))-GROUPS.indexOf(gid(y)));
+    el.innerHTML=`<div class="grid">${sorted.map(i=>card(i,false,b)).join('')}</div>`;return}
   let run=0;
   el.innerHTML=`<div class="board">${GROUPS.map(g=>{
     const its=items.filter(i=>gid(i)===g);if(g==='none'&&!its.length)return '';
-    const sub=its.filter(counted).reduce((a,i)=>a+line(i),0);if(g!=='none')run+=sub;
-    return `<div class="col ${g}"><h3><span class="dot"></span>${esc(gname(g))}${g!=='none'?`<button class="e" aria-label="Rename group" data-act="rengroup" data-id="${g}">&#9998;</button>`:''}</h3>
+    const sub=its.reduce((a,i)=>a+line(i),0);if(g!=='none')run+=sub;
+    return `<div class="col ${g}"><h3><span class="dot"></span><span class="gn" data-act="rengroup" data-id="${g}" title="Tap to rename">${esc(gname(g))}</span><button class="e" aria-label="Rename group" data-act="rengroup" data-id="${g}">&#9998;</button>${its.length?`<button class="btn s all" data-act="allbought" data-id="${g}">✓ Mark all bought</button>`:''}</h3>
       <div class="meta"><b>${fmt(sub)}</b> · ${its.length} item${its.length===1?'':'s'}${g!=='none'?`<br>Running total: ${fmt(run)}`:''}</div>
-      <div class="stack">${its.map(i=>card(i,true)).join('')||'<div class="hint">No items in this group</div>'}</div></div>`}).join('')}</div>`;
+      <div class="stack">${its.map(i=>card(i,true,false)).join('')||'<div class="hint">No items in this group</div>'}</div></div>`}).join('')}</div>`;
 }
 
 /* ---- in-page prompts (browser prompt/confirm are blocked here) ---- */
@@ -292,6 +335,25 @@ const prompt2=(t,v)=>dlg(t,'',true,v,'Save');
 const confirm2=(m,ok)=>dlg('Please confirm',m,false,'',ok||'Delete');
 
 /* ---- events ---- */
+let toastT;
+function toast(msg,label,fn){
+  const t=$('#toast');t.textContent=msg;
+  if(label){const b=document.createElement('button');b.textContent=label;b.onclick=()=>{t.classList.remove('on');fn()};t.appendChild(b)}
+  t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),label?5000:2000)}
+/* a product link opens only on a double tap, so a stray tap never leaves the app */
+let lastTap={id:'',t:0};
+document.addEventListener('click',e=>{
+  const a=e.target.closest('[data-open]');if(!a)return;
+  const it=S.items.find(i=>i.id===a.dataset.open);if(!it||!it.url)return;
+  const now=Date.now();
+  if(lastTap.id===it.id&&now-lastTap.t<500){lastTap={id:'',t:0};$('#toast').classList.remove('on');window.open(it.url,'_blank','noopener')}
+  else{lastTap={id:it.id,t:now};toast('Double-tap to open the link')}
+});
+function moveToBought(its){
+  const snap=its.map(i=>[i,i.group]),t=Date.now();
+  its.forEach(i=>{i.bought=true;i.boughtAt=t;i.group='none'});   /* folder is kept; priority group resets */
+  save();render();
+  toast(its.length===1?'Moved to Bought':`${its.length} items moved to Bought`,'Undo',()=>{snap.forEach(([i,g])=>{i.bought=false;delete i.boughtAt;i.group=g});save();render()})}
 document.addEventListener('click',async e=>{
   const a=e.target.closest('[data-act]');if(!a)return;
   const id=a.dataset.id,act=a.dataset.act,it=S.items.find(i=>i.id===id),f=S.folders.find(x=>x.id===S.ui.folder);
@@ -299,7 +361,13 @@ document.addEventListener('click',async e=>{
   else if(act==='newfolder'){const v=await prompt2('New folder','');if(v&&v.trim()){const nid=uid();S.folders.push({id:nid,name:v.trim()});S.ui.folder=nid;save();render()}}
   else if(act==='renfolder'&&f){const v=await prompt2('Rename folder',f.name);if(v&&v.trim()){f.name=v.trim();save();render()}}
   else if(act==='delfolder'&&f){if(await confirm2(`Delete folder “${f.name}”? Its items stay in All items.`)){S.items.forEach(i=>{if(i.folderId===f.id)i.folderId=null});S.folders=S.folders.filter(x=>x.id!==f.id);S.ui.folder='all';save();render()}}
-  else if(act==='rengroup'){const g=S.groups.find(x=>x.id===id);const v=await prompt2('Rename group',g.name);if(v&&v.trim()){g.name=v.trim();save();render()}}
+  else if(act==='rengroup'){let g=S.groups.find(x=>x.id===id);if(!g){g={id,name:gname(id)};S.groups.push(g)}
+    const v=await prompt2('Rename group',g.name);if(v&&v.trim()){g.name=v.trim();save();render()}}
+  else if(act==='bought'&&it)moveToBought([it]);
+  else if(act==='again'&&it){it.bought=false;delete it.boughtAt;it.group='none';save();render();toast('Moved back to your list')}
+  else if(act==='allbought'){
+    const its=scope().filter(i=>gid(i)===id);if(!its.length)return;
+    if(await confirm2(`Mark all ${its.length} item${its.length===1?'':'s'} in “${gname(id)}” as bought?`,'Mark all bought'))moveToBought(its)}
   else if(act==='edit')openModal(id);
   else if(act==='del'){if(await confirm2(`Remove “${it.title||'this item'}”?`)){dropImage(it.image);S.items=S.items.filter(i=>i.id!==id);save();render()}}
   else if(act==='inc'){it.qty=(it.qty||1)+1;save();render()}
@@ -309,12 +377,21 @@ document.addEventListener('change',e=>{
   const t=e.target,f=t.dataset.f;if(!f)return;const it=S.items.find(i=>i.id===t.dataset.id);if(!it)return;
   if(f==='variant')it.variant=parseInt(t.value);
   if(f==='group')it.group=t.value;
-  if(f==='bought')it.bought=t.checked;
   save();render();
 });
 $('#seg').onclick=e=>{const b=e.target.closest('button');if(b){S.ui.view=b.dataset.view;save();render()}};
 $('#search').oninput=e=>{ui.q=e.target.value;render()};
-$('#addItem').onclick=()=>openModal(null);
+/* tapping Add item also looks at the clipboard and pastes a link if there is one */
+$('#addItem').onclick=()=>{openModal(null);pasteLink()};
+async function pasteLink(){
+  try{
+    if(!navigator.clipboard||!navigator.clipboard.readText)return;
+    const t=((await navigator.clipboard.readText())||'').trim();if(!t)return;
+    let u=(t.match(/https?:\/\/[^\s<>"'　-〿一-鿿＀-￯]+/i)||[])[0];
+    if(!u&&t.length<500&&!/\s/.test(t)&&/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(t))u=t;
+    if(!u||!modal.open||editing||$('#f_url').value.trim())return;
+    $('#f_url').value=u;mst('Link pasted from your clipboard.')
+  }catch{}}
 
 /* ---- add / edit ---- */
 const modal=$('#modal');
@@ -322,24 +399,33 @@ function varRow(v={name:'',price:''}){
   const d=document.createElement('div');d.className='vr';
   d.innerHTML=`<input class="in" placeholder="e.g. Large / Black" value="${esc(v.name)}"><input class="in" inputmode="decimal" placeholder="Price" value="${v.price==null?'':esc(v.price)}"><button type="button" class="ico" aria-label="Remove variant">&times;</button>`;
   d.querySelector('button').onclick=()=>d.remove();$('#vlist').appendChild(d)}
-function setImg(v){modal._img=v||'';const s=isRef(v)?(IMG[v]||''):(v||''),i=$('#pvImg');i.style.visibility=s?'visible':'hidden';if(s)i.src=s}
+function setImg(v){modal._img=v||'';$('#uncrop').hidden=true;const s=isRef(v)?(IMG[v]||''):(v||''),i=$('#pvImg');i.style.visibility=s?'visible':'hidden';if(s)i.src=s}
 function mst(t,err){const s=$('#mst');s.textContent=t||'';s.className='st'+(err?' err':'')}
-function loadPhoto(file){
+function loadPhoto(file,noCrop){
   if(!file||!file.type.startsWith('image/'))return;
+  modal._file=file;
   const url=URL.createObjectURL(file),img=new Image();
-  img.onload=()=>{const k=Math.min(1,560/Math.max(img.width,img.height)),c=document.createElement('canvas');
-    c.width=Math.max(1,Math.round(img.width*k));c.height=Math.max(1,Math.round(img.height*k));
-    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(img,0,0,c.width,c.height);
-    URL.revokeObjectURL(url);setImg(c.toDataURL('image/jpeg',0.75));mst('')};
+  img.onload=()=>{
+    /* A full-screen phone screenshot is very tall. The product picture in it is the full-width square
+       sitting in the vertical centre (e.g. 480x1042 screenshot: picture is 480x480 starting at y=281).
+       Anything that is not that tall is left alone. */
+    let sy=0,sw=img.width,sh=img.height,cropped=false;
+    if(!noCrop&&sh/sw>=1.6){sh=sw;sy=Math.round((img.height-sw)/2);cropped=true}
+    const k=Math.min(1,560/Math.max(sw,sh)),c=document.createElement('canvas');
+    c.width=Math.max(1,Math.round(sw*k));c.height=Math.max(1,Math.round(sh*k));
+    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(img,0,sy,sw,sh,0,0,c.width,c.height);
+    URL.revokeObjectURL(url);setImg(c.toDataURL('image/jpeg',0.75));
+    $('#uncrop').hidden=!cropped;mst(cropped?'Cropped to the product picture.':'')};
   img.onerror=()=>{URL.revokeObjectURL(url);mst('Could not read that image.',true)};
   img.src=url}
 $('#upBtn').onclick=()=>$('#f_file').click();
 $('#f_file').onchange=e=>{loadPhoto(e.target.files[0]);e.target.value=''};
 $('#rmImg').onclick=()=>setImg('');
+$('#uncrop').onclick=()=>{if(modal._file)loadPhoto(modal._file,true)};
 document.addEventListener('paste',e=>{if(!modal.open)return;const f=[...(e.clipboardData?e.clipboardData.items:[])].find(i=>i.type.startsWith('image/'));if(f){e.preventDefault();loadPhoto(f.getAsFile())}});
 function openModal(id){
   editing=id?S.items.find(i=>i.id===id):null;
-  const it=editing||{url:'',title:'',image:'',price:'',qty:1,variants:[],variant:0,folderId:S.ui.folder==='all'?null:S.ui.folder,group:'none'};
+  const it=editing||{url:'',title:'',image:'',price:'',qty:1,variants:[],variant:0,folderId:['all','bought'].includes(S.ui.folder)?null:S.ui.folder,group:'none'};
   $('#mTitle').textContent=editing?'Edit item':'Add item';
   $('#f_url').value=it.url||'';$('#f_title').value=it.title||'';setImg(it.image);
   $('#f_price').value=it.price===''||it.price==null?'':it.price;$('#f_qty').value=it.qty||1;
@@ -490,7 +576,7 @@ $('#gdOff').onclick=()=>{gd.on=false;gd.tok='';gd.exp=0;gdCfg();gdUi();gdBadge('
 (async()=>{
   idb=await idbOpen();Object.assign(IMG,await idbAll());
   S=Object.assign(defaults(),load());S.ui=Object.assign({folder:'all',view:'gallery'},S.ui||{});
-  if(S.ui.folder!=='all'&&!S.folders.some(f=>f.id===S.ui.folder))S.ui.folder='all';
+  norm();
   if(idb){
     let moved=false;
     /* older versions kept pictures inside localStorage; move them to IndexedDB */
