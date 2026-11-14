@@ -383,15 +383,30 @@ $('#seg').onclick=e=>{const b=e.target.closest('button');if(b){S.ui.view=b.datas
 $('#search').oninput=e=>{ui.q=e.target.value;render()};
 /* tapping Add item also looks at the clipboard and pastes a link if there is one */
 $('#addItem').onclick=()=>{openModal(null);pasteLink()};
+/* pull a clean link out of whatever text was copied (e.g. a shopping app's share message) */
+function linkIn(text){
+  const t=(text||'').trim();if(!t)return '';
+  let u=(t.match(/https?:\/\/[^\s<>"'　-〿一-鿿＀-￯]+/i)||[])[0];
+  if(!u&&t.length<500&&!/\s/.test(t)&&/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(t))u=t;
+  return u||''}
 async function pasteLink(){
+  const box=$('#f_url');
+  let read=false;
   try{
-    if(!navigator.clipboard||!navigator.clipboard.readText)return;
-    const t=((await navigator.clipboard.readText())||'').trim();if(!t)return;
-    let u=(t.match(/https?:\/\/[^\s<>"'　-〿一-鿿＀-￯]+/i)||[])[0];
-    if(!u&&t.length<500&&!/\s/.test(t)&&/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(t))u=t;
-    if(!u||!modal.open||editing||$('#f_url').value.trim())return;
-    $('#f_url').value=u;mst('Link pasted from your clipboard.')
-  }catch{}}
+    if(navigator.clipboard&&navigator.clipboard.readText){
+      const t=await navigator.clipboard.readText();read=true;
+      const u=linkIn(t);
+      if(u&&modal.open&&!editing&&!box.value.trim()){box.value=u;mst('Link pasted from your clipboard.');return}
+      if(!u&&modal.open&&!editing)mst('No link found in your clipboard.');
+    }
+  }catch{}
+  /* The browser would not let the page read the clipboard (Firefox and Safari ask first; some browsers block it).
+     Put the cursor in the link box so the keyboard's own paste suggestion is one tap away. */
+  if(!read&&modal.open&&!editing&&!box.value.trim()){box.focus();mst('Your browser blocked automatic pasting. Tap Paste on the keyboard, or press and hold the box.')}}
+/* pasting by hand into the link box keeps only the link, not the whole share message */
+$('#f_url').addEventListener('paste',e=>{
+  const t=e.clipboardData?e.clipboardData.getData('text'):'',u=linkIn(t);
+  if(u&&u!==t.trim()){e.preventDefault();e.target.value=u;mst('Link picked out of the pasted text.')}});
 
 /* ---- add / edit ---- */
 const modal=$('#modal');
@@ -480,10 +495,21 @@ bk.addEventListener('click',e=>{if(e.target===bk)bk.close()});
    The access token lasts about an hour, so after that you tap the cloud badge once to sign in again. */
 const GD_KEY='wishlist_gdrive',SCOPE='https://www.googleapis.com/auth/drive.appdata',FNAME='wishlist.json';
 const gd={clientId:'',on:false,fileId:'',remoteMod:'',tok:'',exp:0};let gdTimer=null,gdBusy=false;
+/* Optional: paste your OAuth client ID between the quotes once, and the page will never ask for it again,
+   even on a new address, a new device, or after the browser clears its data. */
+const DEFAULT_CLIENT_ID='92238799271-oraj5fgso960b6i95pl5j0sgd5etovdb.apps.googleusercontent.com';
+const GD_TOK='wishlist_gdrive_tok';
 try{const c=JSON.parse(localStorage.getItem(GD_KEY)||'{}');gd.clientId=c.clientId||'';gd.on=!!c.on;gd.fileId=c.fileId||'';gd.remoteMod=c.remoteMod||''}catch{}
-const gdCfg=()=>{try{localStorage.setItem(GD_KEY,JSON.stringify({clientId:gd.clientId,on:gd.on,fileId:gd.fileId,remoteMod:gd.remoteMod}))}catch{}};
+if(!gd.clientId)gd.clientId=DEFAULT_CLIENT_ID;
+/* keep the sign-in across refreshes: Google's access lasts about an hour, so reuse it while it is still valid */
+try{const t=JSON.parse(localStorage.getItem(GD_TOK)||'{}');if(t.tok&&t.exp>Date.now()+60000){gd.tok=t.tok;gd.exp=t.exp}}catch{}
+const gdTokSave=()=>{try{if(gd.tok)localStorage.setItem(GD_TOK,JSON.stringify({tok:gd.tok,exp:gd.exp}));else localStorage.removeItem(GD_TOK)}catch{}};
+/* settings are written to two places (localStorage and IndexedDB) so losing one does not lose the client ID */
+const gdCfg=()=>{const c={clientId:gd.clientId,on:gd.on,fileId:gd.fileId,remoteMod:gd.remoteMod};
+  try{localStorage.setItem(GD_KEY,JSON.stringify(c))}catch{}
+  idbTx(s=>s.put(c,'meta:gd'))};
 const gdSt=(t,err)=>{const s=$('#gdSt');s.textContent=t||'';s.className='st'+(err?' err':'')};
-function gdBadge(s,e){const b=$('#gdBadge');b.hidden=!gd.on;
+function gdBadge(s,e){const b=$('#gdBadge');b.hidden=!gd.on;gd.needAuth=(s==='auth');
   b.textContent={ok:'☁ Synced',pending:'☁ Saving…',busy:'☁ Syncing…',auth:'☁ Tap to sign in',err:'☁ Sync failed · retry'}[s]||'';b.title=(e&&e.message)||''}
 function gdUi(){const on=gd.on;$('#gdConnect').textContent=on?'Reconnect':'Connect Google Drive';
   ['gdPush','gdPull','gdOff'].forEach(i=>$('#'+i).hidden=!on);
@@ -499,13 +525,13 @@ async function getToken(interactive){
   await loadGIS();
   return new Promise((res,rej)=>{
     const c=google.accounts.oauth2.initTokenClient({client_id:gd.clientId,scope:SCOPE,
-      callback:r=>{if(r.error)return rej(new Error(r.error_description||r.error));gd.tok=r.access_token;gd.exp=Date.now()+(r.expires_in||3600)*1000;res(gd.tok)},
+      callback:r=>{if(r.error)return rej(new Error(r.error_description||r.error));gd.tok=r.access_token;gd.exp=Date.now()+(r.expires_in||3600)*1000;gdTokSave();res(gd.tok)},
       error_callback:e=>rej(new Error(e&&e.type==='popup_blocked_by_browser'?'The sign-in popup was blocked. Allow popups for this page and try again.':'Sign-in was cancelled or needs you to tap.'))});
     c.requestAccessToken(interactive?(gd.reconsent?{prompt:'consent'}:{}):{prompt:'none'});gd.reconsent=false})}
 async function gdFetch(url,opt,interactive){
   const t=await getToken(interactive);opt=opt||{};
   const r=await fetch(url,Object.assign({},opt,{headers:Object.assign({Authorization:'Bearer '+t},opt.headers||{})}));
-  if(r.status===401){gd.tok='';gd.exp=0}
+  if(r.status===401){gd.tok='';gd.exp=0;gdTokSave()}
   if(!r.ok){
     let reason='',msg='';try{const j=await r.json();const er=j.error||{};msg=er.message||'';reason=((er.errors||[])[0]||{}).reason||er.status||''}catch{}
     const key=(reason+' '+msg).toLowerCase();
@@ -570,18 +596,29 @@ $('#gdPull').onclick=async()=>{
     if(!remote)throw new Error('The copy in Drive is empty or damaged. Use “Save to Drive now” to replace it.');
     await adopt(remote);gd.remoteMod=f.modifiedTime;gdCfg();persist();render();gdSt('Loaded from Drive.')}
   catch(e){gdSt(e.message,true)}};
-$('#gdOff').onclick=()=>{gd.on=false;gd.tok='';gd.exp=0;gdCfg();gdUi();gdBadge('');gdSt('Disconnected. The copy in Drive is left as it was.')};
+/* When Google needs you to confirm again (about once an hour), do it on your next tap instead of making you hunt for the badge.
+   Tried at most once every 10 minutes, so a cancelled popup does not nag. */
+document.addEventListener('click',()=>{
+  if(!gd.on||gdBusy||!gd.needAuth||Date.now()-(gd.lastAuto||0)<600000)return;
+  gd.lastAuto=Date.now();gdBusy=true;gdBadge('busy');
+  gdSync(true,true).then(()=>gdBadge('ok')).catch(e=>gdBadge(!gd.tok||e.status===401?'auth':'err',e)).finally(()=>{gdBusy=false})
+},true);
+$('#gdOff').onclick=()=>{gd.on=false;gd.tok='';gd.exp=0;gdTokSave();gdCfg();gdUi();gdBadge('');gdSt('Disconnected. The copy in Drive is left as it was.')};
 
 /* ---- start ---- */
 (async()=>{
   idb=await idbOpen();Object.assign(IMG,await idbAll());
+  /* if the browser lost the localStorage copy of the Drive settings, bring them back from IndexedDB */
+  const m=IMG['meta:gd'];
+  if(m&&typeof m==='object'&&(!gd.clientId||gd.clientId===DEFAULT_CLIENT_ID&&!gd.on&&m.on)){
+    gd.clientId=m.clientId||gd.clientId;gd.on=!!m.on;gd.fileId=m.fileId||'';gd.remoteMod=m.remoteMod||'';gdCfg()}
   S=Object.assign(defaults(),load());S.ui=Object.assign({folder:'all',view:'gallery'},S.ui||{});
   norm();
   if(idb){
     let moved=false;
     /* older versions kept pictures inside localStorage; move them to IndexedDB */
     for(const it of S.items)if(typeof it.image==='string'&&it.image.startsWith('data:')){it.image=await storeImage(it.image);moved=true}
-    if(S.items.length){const used=new Set(S.items.map(i=>i.image));Object.keys(IMG).forEach(k=>{if(!used.has(k)){delete IMG[k];idbTx(s=>s.delete(k))}})}
+    if(S.items.length){const used=new Set(S.items.map(i=>i.image));Object.keys(IMG).forEach(k=>{if(isRef(k)&&!used.has(k)){delete IMG[k];idbTx(s=>s.delete(k))}})}
     if(moved){if(!S.updatedAt)S.updatedAt=Date.now();persist()}}
   render();
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch{}
