@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Wishlist</title>
 <style>
 :root{--bg:#f5f5f3;--panel:#fff;--ink:#1c1c1e;--muted:#6e6e73;--line:#e4e4df;--hover:#efefeb;--accent:#3b6cf6;--on:#fff;--g1:#2f9e6b;--g2:#d9962a;--g3:#7c5cd6;--none:#9a9aa0;--warn:#b9770e;--err:#c0392b;--sh:0 1px 2px rgba(0,0,0,.05),0 6px 18px rgba(0,0,0,.06);
@@ -85,6 +85,40 @@ a.ttl{color:var(--accent)}
 dialog{border:0;border-radius:18px;padding:0;width:min(560px,94vw);max-height:92vh;background:var(--panel);color:var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.4)}
 dialog::backdrop{background:rgba(0,0,0,.45)}
 @media(max-width:600px){dialog{width:100%;max-width:100%;margin:auto 0 0;border-radius:18px 18px 0 0;padding-bottom:env(safe-area-inset-bottom,0px)}}
+/* phone: the add / edit panel is a bottom drawer that slides up */
+@keyframes drawerUp{from{transform:translateY(48px);opacity:0}to{transform:none;opacity:1}}
+@media(max-width:600px){
+  dialog[open]{animation:drawerUp .22s ease-out}
+  dialog{max-height:92vh;max-height:92dvh}
+  #modal .mb,#bk .mb,#split .mb{max-height:calc(92vh - 170px);max-height:calc(92dvh - 170px)}
+  #modal .mh::before,#bk .mh::before,#split .mh::before{content:"";display:block;width:40px;height:4px;border-radius:2px;background:var(--line);margin:-6px auto 14px}
+}
+.mh:focus{outline:none}
+/* split-by-variant drawer */
+.sub2{font-size:13px;font-weight:400;color:var(--muted);margin-top:2px}
+#spT{overflow-wrap:anywhere}
+.sprows{display:grid;gap:10px}
+.sprow{border:1px solid var(--line);border-left:4px solid var(--c,var(--line));border-radius:12px;padding:10px 12px;display:grid;gap:8px;background:var(--panel)}
+.sprow.off{background:var(--hover);border-left-color:var(--line)}
+.sprow .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.sprow .nm{font-weight:600;overflow-wrap:anywhere}
+.sprow .pr{color:var(--muted);white-space:nowrap;font-size:13px}
+.sprow .ctl{display:flex;align-items:center;gap:8px}
+.sprow .ctl .sel{flex:1;min-width:0;font-size:16px;padding:9px 10px}
+.sprow .sub{font-weight:650;min-width:76px;text-align:right}
+.sprow .note{font-size:12px;color:var(--muted);margin-top:-2px}
+.spint{min-height:0;margin-bottom:2px;line-height:1.5}
+.spmf{flex-wrap:wrap;align-items:center;justify-content:space-between}
+.spsum{flex:1 1 160px;font-size:13px;color:var(--muted)}
+.spsum b{color:var(--ink);font-size:15px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.lnkbtn{border:0;background:none;color:var(--accent);font-size:12.5px;padding:2px 0;text-align:left;cursor:pointer;touch-action:manipulation}
+.lnkbtn:hover{text-decoration:underline}
+.lrow{display:flex;gap:8px}.lrow .in{flex:1;min-width:0}.lrow .btn{flex:none}
+/* keep the text cursor inside its box: fixed-height fields, normal line height, no native search styling, no scroll-jump on focus */
+input.in{height:44px;line-height:normal}
+input[type=search]{-webkit-appearance:none;appearance:none}
+.mb{scroll-padding:16px 0}
 .mh{padding:18px 20px 4px;font-size:18px;font-weight:700}
 .mb{padding:8px 20px;display:grid;gap:13px;max-height:64vh;overflow:auto}
 .f label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
@@ -137,10 +171,10 @@ textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
 <div id="toast" role="status" aria-live="polite"></div>
 
 <dialog id="modal">
-  <div class="mh" id="mTitle">Add item</div>
+  <div class="mh" id="mTitle" tabindex="-1" autofocus>Add item</div>
   <div class="mb">
     <div class="f"><label>Name</label><input class="in" id="f_title" placeholder="What do you want?"></div>
-    <div class="f"><label>Product link (optional)</label><input class="in" id="f_url" inputmode="url" autocapitalize="off" placeholder="Paste a product link"></div>
+    <div class="f"><label>Product link (optional)</label><div class="lrow"><input class="in" id="f_url" inputmode="url" autocapitalize="off" placeholder="Paste a product link"><button type="button" class="btn" id="pasteBtn">Paste</button></div></div>
     <div class="f"><label>Picture</label>
       <div class="pv"><img id="pvImg" alt="">
         <div class="pvb"><button type="button" class="btn" id="upBtn">Add photo</button><button type="button" class="btn" id="rmImg">Remove</button><button type="button" class="btn" id="uncrop" hidden>Use full image</button></div>
@@ -150,7 +184,7 @@ textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
       <div class="f"><label>Price (&#8369;)</label><input class="in" id="f_price" inputmode="decimal" placeholder="0.00"></div>
       <div class="f"><label>Quantity</label><input class="in" id="f_qty" type="number" inputmode="numeric" min="1" value="1"></div>
     </div>
-    <div class="f"><label>Variants (size, colour, pack). Each can have its own price.</label><div id="vlist"></div><button type="button" class="btn" id="addVar">+ Add variant</button></div>
+    <div class="f"><label>Variants (size, colour, pack). Each can have its own price.</label><div id="vlist"></div><button type="button" class="btn" id="addVar">+ Add variant</button><div class="st" id="famNote" hidden style="margin-top:8px">This item was split by variant. Its name, picture, link, folder and variant list are shared with the other split items. Quantity and priority group stay separate.</div></div>
     <div class="row">
       <div class="f"><label>Folder</label><select class="sel" id="f_folder"></select></div>
       <div class="f"><label>Priority group</label><select class="sel" id="f_group"></select></div>
@@ -160,10 +194,19 @@ textarea.in{min-height:130px;font:12px/1.4 ui-monospace,Menlo,monospace}
   <div class="mf"><button type="button" class="btn" id="mCancel">Cancel</button><button type="button" class="btn primary" id="mSave">Save item</button></div>
 </dialog>
 
+<dialog id="split">
+  <div class="mh" tabindex="-1" autofocus><span id="spT"></span><div class="sub2">Choose where each variant goes</div></div>
+  <div class="mb">
+    <div class="st spint">Put each variant you want to buy into a priority group. Every variant you add becomes its own item, with its own quantity and bought status. Variants left as “Not added” simply stay as options of the item.</div>
+    <div class="sprows" id="spRows"></div>
+  </div>
+  <div class="mf spmf"><div class="spsum" id="spSum"></div><div class="pvb"><button type="button" class="btn" id="spCancel">Cancel</button><button type="button" class="btn primary" id="spOk">Apply</button></div></div>
+</dialog>
+
 <dialog id="ask"><div class="mh" id="askT"></div><div class="mb"><div id="askM"></div><input class="in" id="askI"></div><div class="mf"><button type="button" class="btn" id="askNo">Cancel</button><button type="button" class="btn primary" id="askOk">OK</button></div></dialog>
 
 <dialog id="bk">
-  <div class="mh">Backup and sync</div>
+  <div class="mh" tabindex="-1" autofocus>Backup and sync</div>
   <div class="mb">
     <div class="sec f"><label>Google Drive sync</label>
       <div class="st" id="gdInfo" style="min-height:0;margin-bottom:8px">Keeps your list and pictures in a private, hidden app folder in your Google Drive. It can't see your other Drive files.</div>
@@ -232,7 +275,10 @@ const exportData=()=>{const d=JSON.parse(JSON.stringify(S));d.items.forEach(i=>{
 async function adopt(d){
   const old=S?S.items.map(i=>i.image):[];
   const N=Object.assign(defaults(),d);N.ui=Object.assign({folder:'all',view:'gallery'},N.ui||{});
-  for(const it of N.items)if(typeof it.image==='string'&&it.image.startsWith('data:'))it.image=await storeImage(it.image);
+  const seen=new Map();   /* split items share one picture: store it once */
+  for(const it of N.items)if(typeof it.image==='string'&&it.image.startsWith('data:')){
+    if(!seen.has(it.image))seen.set(it.image,await storeImage(it.image));
+    it.image=seen.get(it.image)}
   old.forEach(dropImage);S=N;norm();
 }
 /* with Google Drive connected, the list is kept there too, so a refusal from this browser is not worth a warning */
@@ -274,9 +320,14 @@ function renderSummary(){
     h+=`<div class="chip ${g}"><div class="l"><span class="dot"></span>${esc(gname(g))}</div><div class="v">${fmt(its.reduce((a,i)=>a+line(i),0))}</div></div>`}
   el.innerHTML=h;
 }
+/* items split from one product share a "fam" id; only the not-yet-bought ones count as live entries */
+const famActive=it=>it.fam?S.items.filter(i=>i.fam===it.fam&&!i.bought):[it];
 function card(it,compact,inB){
   const vs=it.variants||[];
-  const vsel=vs.length?`<select class="sel s" aria-label="Variant" data-f="variant" data-id="${it.id}">${vs.map((v,i)=>`<option value="${i}" ${i===it.variant?'selected':''}>${esc(v.name)}${hasP(v)?' · '+fmt(parseFloat(v.price)):''}</option>`).join('')}</select>`:'';
+  const takenBy=inB?new Set():new Set(famActive(it).filter(s=>s!==it).map(s=>s.variant));   /* variants already in another split item */
+  const vsel=vs.length?`<select class="sel s" aria-label="Variant" data-f="variant" data-id="${it.id}">${vs.map((v,i)=>`<option value="${i}" ${i===it.variant?'selected':''} ${takenBy.has(i)?'disabled':''}>${esc(v.name)}${hasP(v)?' · '+fmt(parseFloat(v.price)):''}${takenBy.has(i)?' (in another item)':''}</option>`).join('')}</select>`:'';
+  const nFam=famActive(it).length;
+  const splitBtn=(!inB&&vs.length>=2)?`<button type="button" class="lnkbtn" data-act="split" data-id="${it.id}">⑂ ${nFam>1?`Split into ${nFam} items · manage`:'Split variants into groups'}</button>`:'';
   const g=gid(it),fo=S.folders.find(x=>x.id===it.folderId),u=unit(it),q=it.qty||1;
   const im=imgSrc(it);
   const thumb=`<div class="thumb">&#9825;${im?`<img src="${esc(im)}" alt="" onerror="this.remove()">`:''}${!compact&&!inB?`<span class="badge ${g}"><span class="dot"></span>${esc(gname(g))}</span>`:''}</div>`;
@@ -289,9 +340,9 @@ function card(it,compact,inB){
   const del=`<button class="ico" aria-label="Delete" data-act="del" data-id="${it.id}">&times;</button>`;
   if(inB)return `<article class="card">${thumb}<div class="body">${title}${hostLine}${vsel}<div class="prow">${price}</div>${fo?`<span class="tag">${esc(fo.name)}</span>`:''}
     <div class="foot"><button class="btn s" style="flex:1" data-act="again" data-id="${it.id}">&#8634; Buy again</button>${edit}${del}</div></div></article>`;
-  if(compact)return `<article class="card compact">${thumb}<div class="body">${title}${vsel}<div class="prow">${price}${qty}</div>${gsel}
+  if(compact)return `<article class="card compact">${thumb}<div class="body">${title}${vsel}${splitBtn}<div class="prow">${price}${qty}</div>${gsel}
     <div class="foot"><button class="btn s" data-act="bought" data-id="${it.id}">✓ Bought</button><span style="flex:1"></span>${edit}</div></div></article>`;
-  return `<article class="card">${thumb}<div class="body">${title}${hostLine}${vsel}
+  return `<article class="card">${thumb}<div class="body">${title}${hostLine}${vsel}${splitBtn}
     <div class="prow">${price}${qty}</div>${fo&&S.ui.folder==='all'?`<span class="tag">${esc(fo.name)}</span>`:''}
     <div class="foot">${gsel}${edit}${del}</div><button class="btn s wide" data-act="bought" data-id="${it.id}">✓ Mark as bought</button></div></article>`;
 }
@@ -369,7 +420,8 @@ document.addEventListener('click',async e=>{
     const its=scope().filter(i=>gid(i)===id);if(!its.length)return;
     if(await confirm2(`Mark all ${its.length} item${its.length===1?'':'s'} in “${gname(id)}” as bought?`,'Mark all bought'))moveToBought(its)}
   else if(act==='edit')openModal(id);
-  else if(act==='del'){if(await confirm2(`Remove “${it.title||'this item'}”?`)){dropImage(it.image);S.items=S.items.filter(i=>i.id!==id);save();render()}}
+  else if(act==='split'&&it)openSplit(id);
+  else if(act==='del'){if(await confirm2(`Remove “${it.title||'this item'}”?`)){const f=it.fam,img=it.image;S.items=S.items.filter(i=>i.id!==id);tidyFam(f);dropUnused(img);save();render()}}
   else if(act==='inc'){it.qty=(it.qty||1)+1;save();render()}
   else if(act==='dec'){it.qty=Math.max(1,(it.qty||1)-1);save();render()}
 });
@@ -381,28 +433,24 @@ document.addEventListener('change',e=>{
 });
 $('#seg').onclick=e=>{const b=e.target.closest('button');if(b){S.ui.view=b.dataset.view;save();render()}};
 $('#search').oninput=e=>{ui.q=e.target.value;render()};
-/* tapping Add item also looks at the clipboard and pastes a link if there is one */
-$('#addItem').onclick=()=>{openModal(null);pasteLink()};
+/* Add item only opens the drawer. The clipboard is read when you tap the Paste button, never before. */
+$('#addItem').onclick=()=>openModal(null);
 /* pull a clean link out of whatever text was copied (e.g. a shopping app's share message) */
 function linkIn(text){
   const t=(text||'').trim();if(!t)return '';
   let u=(t.match(/https?:\/\/[^\s<>"'　-〿一-鿿＀-￯]+/i)||[])[0];
   if(!u&&t.length<500&&!/\s/.test(t)&&/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i.test(t))u=t;
   return u||''}
-async function pasteLink(){
+$('#pasteBtn').onclick=async()=>{
   const box=$('#f_url');
-  let read=false;
   try{
-    if(navigator.clipboard&&navigator.clipboard.readText){
-      const t=await navigator.clipboard.readText();read=true;
-      const u=linkIn(t);
-      if(u&&modal.open&&!editing&&!box.value.trim()){box.value=u;mst('Link pasted from your clipboard.');return}
-      if(!u&&modal.open&&!editing)mst('No link found in your clipboard.');
-    }
-  }catch{}
-  /* The browser would not let the page read the clipboard (Firefox and Safari ask first; some browsers block it).
-     Put the cursor in the link box so the keyboard's own paste suggestion is one tap away. */
-  if(!read&&modal.open&&!editing&&!box.value.trim()){box.focus();mst('Your browser blocked automatic pasting. Tap Paste on the keyboard, or press and hold the box.')}}
+    if(!(navigator.clipboard&&navigator.clipboard.readText))throw new Error('unsupported');
+    const t=await navigator.clipboard.readText(),u=linkIn(t);
+    if(u){box.value=u;mst('Link pasted.')}
+    else mst(t&&t.trim()?'Your clipboard has text, but no link in it.':'Your clipboard is empty.',true)
+  }catch{
+    /* the browser refused to let the page read the clipboard: fall back to pasting by hand */
+    box.focus();mst('Your browser blocked the Paste button. Press and hold the box, then choose Paste.',true)}};
 /* pasting by hand into the link box keeps only the link, not the whole share message */
 $('#f_url').addEventListener('paste',e=>{
   const t=e.clipboardData?e.clipboardData.getData('text'):'',u=linkIn(t);
@@ -414,7 +462,7 @@ function varRow(v={name:'',price:''}){
   const d=document.createElement('div');d.className='vr';
   d.innerHTML=`<input class="in" placeholder="e.g. Large / Black" value="${esc(v.name)}"><input class="in" inputmode="decimal" placeholder="Price" value="${v.price==null?'':esc(v.price)}"><button type="button" class="ico" aria-label="Remove variant">&times;</button>`;
   d.querySelector('button').onclick=()=>d.remove();$('#vlist').appendChild(d)}
-function setImg(v){modal._img=v||'';$('#uncrop').hidden=true;const s=isRef(v)?(IMG[v]||''):(v||''),i=$('#pvImg');i.style.visibility=s?'visible':'hidden';if(s)i.src=s}
+function setImg(v){modal._img=v||'';$('#uncrop').hidden=true;const s=isRef(v)?(IMG[v]||''):(v||''),i=$('#pvImg');i.style.display=s?'block':'none';if(s)i.src=s}
 function mst(t,err){const s=$('#mst');s.textContent=t||'';s.className='st'+(err?' err':'')}
 function loadPhoto(file,noCrop){
   if(!file||!file.type.startsWith('image/'))return;
@@ -447,6 +495,7 @@ function openModal(id){
   $('#vlist').innerHTML='';(it.variants||[]).forEach(varRow);
   $('#f_folder').innerHTML=`<option value="">All items only</option>`+S.folders.map(f=>`<option value="${f.id}" ${f.id===it.folderId?'selected':''}>${esc(f.name)}</option>`).join('');
   $('#f_group').innerHTML=GROUPS.map(g=>`<option value="${g}" ${g===gid(it)?'selected':''}>${esc(gname(g))}</option>`).join('');
+  $('#famNote').hidden=!(editing&&editing.fam);
   modal._variant=it.variant||0;mst('');modal.showModal();
 }
 $('#addVar').onclick=()=>varRow();
@@ -460,15 +509,86 @@ $('#mSave').onclick=async()=>{
   $('#mSave').disabled=true;
   let image=modal._img||'';
   if(image.startsWith('data:'))image=await storeImage(image);
-  if(editing&&editing.image!==image)dropImage(editing.image);
+  const oldImg=editing?editing.image:null;
   $('#mSave').disabled=false;
   const o=editing||{id:uid(),added:Date.now(),bought:false};
   Object.assign(o,{url,title,image,price:$('#f_price').value.trim(),qty:Math.max(1,parseInt($('#f_qty').value)||1),variants,
     variant:variants.length?Math.min(modal._variant||0,variants.length-1):0,folderId:$('#f_folder').value||null,group:$('#f_group').value});
   if(!editing)S.items.unshift(o);
+  /* items split from one product share title, picture, link, folder and the variant list; quantity, variant and group stay their own */
+  const f=o.fam;
+  if(f){
+    if(variants.length<2)S.items.forEach(s=>{if(s.fam===f)delete s.fam});   /* nothing left to split by */
+    else S.items.forEach(s=>{if(s!==o&&s.fam===f){
+      Object.assign(s,{url:o.url,title:o.title,image:o.image,price:o.price,currency:o.currency,folderId:o.folderId,variants:JSON.parse(JSON.stringify(variants))});
+      s.variant=Math.min(s.variant||0,variants.length-1)}})}
+  if(oldImg&&oldImg!==image)dropUnused(oldImg);
   save();render();modal.close();
 };
 modal.addEventListener('click',e=>{if(e.target===modal)modal.close()});
+
+/* ---- split variants into priority groups ----
+   An item with variants stays ONE item until you put variants into priority groups. Every variant you put in a group
+   becomes its own item (own variant, quantity, group and bought state), linked to the others by "fam".
+   Variants left as "Not added" are only options of the item. Title, picture, link, folder and the variant list stay shared. */
+const spd=$('#split');let sp=null;
+const varPrice=(it,i)=>{const v=(it.variants||[])[i];return hasP(v)?parseFloat(v.price):n(it.price)};
+function dropUnused(ref){if(isRef(ref)&&!S.items.some(i=>i.image===ref))dropImage(ref)}
+function tidyFam(f){if(!f)return;const m=S.items.filter(i=>i.fam===f);if(m.length<2)m.forEach(i=>{delete i.fam})}
+function openSplit(id){
+  const it=S.items.find(i=>i.id===id);if(!it||(it.variants||[]).length<2)return;
+  const live=famActive(it);
+  sp={it,rows:it.variants.map((v,i)=>{const m=live.find(x=>x.variant===i);return{m,g:m?gid(m):'off',q:m?(m.qty||1):1}})};
+  renderSplit();spd.showModal();
+}
+function renderSplit(){
+  const {it,rows}=sp,vs=it.variants;
+  $('#spT').textContent=it.title||'Untitled';
+  let total=0,count=0;
+  $('#spRows').innerHTML=rows.map((r,i)=>{
+    const on=r.g!=='off',p=varPrice(it,i);
+    if(on){total+=p*r.q;count++}
+    const opts=[['off','Not added']];
+    if(r.m&&gid(r.m)==='none')opts.push(['none','Unsorted']);          /* an existing unsorted item can stay as it is */
+    ['g1','g2','g3'].forEach(g=>opts.push([g,gname(g)]));
+    return `<div class="sprow ${on?r.g:'off'}" data-i="${i}">
+      <div class="top"><span class="nm">${esc(vs[i].name)}</span><span class="pr">${fmt(p)}</span></div>
+      <div class="ctl"><select class="sel" aria-label="Priority group for ${esc(vs[i].name)}" data-sp="g">${opts.map(([v,l])=>`<option value="${v}" ${v===r.g?'selected':''}>${esc(l)}</option>`).join('')}</select>
+        ${on?`<div class="qty"><button type="button" aria-label="Less" data-sp="dec">&minus;</button><span>${r.q}</span><button type="button" aria-label="More" data-sp="inc">+</button></div><span class="sub">${fmt(p*r.q)}</span>`:''}</div>
+      ${on?'':`<div class="note">${r.m?'This item will be removed from your list':'Stays an option of the item'}</div>`}</div>`}).join('');
+  $('#spSum').innerHTML=count?`<b>${count} ${count===1?'item':'items'}</b> · ${fmt(total)}`:'Add at least one variant';
+  $('#spOk').disabled=!count;
+  $('#spOk').textContent=count>1?`Split into ${count} items`:'Save';
+}
+spd.addEventListener('change',e=>{const s=e.target.closest('[data-sp=g]');if(!s)return;sp.rows[+s.closest('.sprow').dataset.i].g=s.value;renderSplit()});
+spd.addEventListener('click',e=>{
+  if(e.target===spd){spd.close();return}
+  const b=e.target.closest('button[data-sp]');if(!b)return;
+  const r=sp.rows[+b.closest('.sprow').dataset.i];
+  if(b.dataset.sp==='inc')r.q++;else if(b.dataset.sp==='dec')r.q=Math.max(1,r.q-1);
+  renderSplit()});
+$('#spCancel').onclick=()=>spd.close();
+$('#spOk').onclick=()=>{
+  const {it,rows}=sp,added=rows.map((r,i)=>({...r,i})).filter(r=>r.g!=='off');
+  if(!added.length)return;
+  const snap=JSON.stringify(S.items),fam0=it.fam||null;
+  const keepFam=added.length>1||(fam0&&S.items.some(i=>i.fam===fam0&&i.bought));
+  const fam=keepFam?(fam0||uid()):null;
+  const apply=(m,r)=>{m.variant=r.i;m.group=r.g;m.qty=r.q;if(fam)m.fam=fam;else delete m.fam};
+  const free=rows.filter(r=>r.m&&r.g==='off').map(r=>r.m);       /* items set to "Not added" are reused before new ones are made */
+  const news=[];
+  added.forEach(r=>{
+    if(r.m){apply(r.m,r);return}
+    const m=free.shift();if(m){apply(m,r);return}
+    const c={id:uid(),added:Date.now(),bought:false,title:it.title,url:it.url,image:it.image,price:it.price,currency:it.currency,
+      variants:JSON.parse(JSON.stringify(it.variants)),folderId:it.folderId};
+    apply(c,r);news.push(c)});
+  const gone=new Set(free.map(m=>m.id)),out=[];
+  for(const x of S.items){if(!gone.has(x.id))out.push(x);if(x===it)out.push(...news)}
+  S.items=out;tidyFam(fam0);tidyFam(fam);
+  spd.close();save();render();
+  toast(added.length>1?`Split into ${added.length} items`:'Variants updated','Undo',()=>{S.items=JSON.parse(snap);save();render()});
+};
 
 /* ---- backup ---- */
 const bk=$('#bk'),bs=(t,err)=>{const s=$('#bkSt');s.textContent=t||'';s.className='st'+(err?' err':'')};
